@@ -1,7 +1,7 @@
 package scasm
 
 import scala.util._
-import scala.collection.mutable.{ AnyRefMap => MMap }
+import scala.collection.mutable.{ AnyRefMap => RMap }
 import org.objectweb.asm
 import asm.Opcodes._
 
@@ -15,24 +15,33 @@ case class Call(op: Int, name: String, params: Array[String], in: V[Meth]) exten
 }
 object NoCall extends Call(-1, "", Array.empty[String], V(NoMeth)) { override def toString = "Call()" }
 
-case class Meth(name: String, params: Array[String], in: V[Klas]) extends Named {
+case class Meth(name: String, access: Int, params: Array[String], in: V[Klas]) extends Named {
+  def isStatic = (access & ACC_STATIC) != 0
+  def protection = (access & (ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE)) match {
+    case ACC_PUBLIC => -1
+    case ACC_PROTECTED => 0
+    case ACC_PRIVATE => 1
+    case x => throw new Exception("What kind of access is " + x.toHexString + "?")
+  }
   def str(from: Klas) = if (from eq in.value) s"Meth($name, ${params.mkString(", ")}, ^)" else toString
   override def toString = s"Meth($name, ${params.mkString(", ")}, $in)"
 }
-object NoMeth extends Meth("", Array.empty[String], V(NoKlas)) { override def toString = "Meth()" }
+object NoMeth extends Meth("", -1, Array.empty[String], V(NoKlas)) { override def toString = "Meth()" }
 
-case class Klas(name: String, sig: String, access: Int, parents: Array[String], methods: Array[Meth], calls: Array[Call]) extends Named {
-  def isSingle = name endsWith "$" // TODO--check properly!
-  def isTrait = true // TODO--actually check!
-  def isImpl = true // TODO--actually check!
-  override def toString = s"Klas($name, $sig, $access,, ${parents.mkString(", ")},, ${methods.map(_.str(this)).mkString(", ")},, ${calls.mkString(", ")})"
+case class Klas(name: String, sig: String, access: Int, parents: Array[String], fields: Array[String], methods: Array[Meth], calls: Array[Call]) extends Named {
+  def isSingle = fields contains "MODULE$"
+  def isTrait = (access & ACC_INTERFACE) != 0
+  def isImpl = name.endsWith("$class") && isAbstract && methods.forall(_.isStatic)
+  def isAbstract = (access & ACC_ABSTRACT) != 0
+  override def toString = s"Klas($name, $sig, $access,, ${parents.mkString(", ")},, ${fields.mkString(", ")},, ${methods.map(_.str(this)).mkString(", ")},, ${calls.mkString(", ")})"
 }
-object NoKlas extends Klas("", "", -1, Array.empty[String], Array.empty[Meth], Array.empty[Call]) { override def toString = "Klas()" }
+object NoKlas extends Klas("", "", -1, Array.empty[String], Array.empty[String], Array.empty[Meth], Array.empty[Call]) { override def toString = "Klas()" }
 
 class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(ASM5) {
   private[this] val myKlas: V[Klas] = V(NoKlas)
   private[this] var myMeths: List[V[Meth]] = Nil
   private[this] var myCalls: List[V[Call]] = Nil
+  private[this] var myFields: List[String] = Nil
   def from(cr: asm.ClassReader): Either[String, Klas] = {
     Try{ cr.accept(this, 0) } match {
       case Failure(t) => Left(Usage.explain(t))
@@ -55,13 +64,20 @@ class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(A
   override def visitAnnotation(desc: String, vis: Boolean) = null
   override def visitAttribute(attr: asm.Attribute) {}
   override def visitInnerClass(name: String, outName: String, inName: String, acc: Int) {}
-  override def visitField(acc: Int, name: String, desc: String, sig: String, v: Object) = null
+  override def visitField(acc: Int, name: String, desc: String, sig: String, v: Object) = {
+    myFields = name :: myFields
+    null
+  }
   override def visitMethod(acc: Int, name: String, desc: String, sig: String, exc: Array[String]) = {
-    myMeths = V(Meth(name, Array(sig, desc), myKlas)) :: myMeths
+    myMeths = V(Meth(name, acc, Array(sig, desc), myKlas)) :: myMeths
     MethExtractor
   }
   override def visitEnd {
-    myKlas.value = myKlas.value.copy(methods = myMeths.reverseMap(_.value).toArray, calls = myCalls.reverseMap(_.value).toArray)
+    myKlas.value = myKlas.value.copy(
+      fields = myFields.toArray.reverse,
+      methods = myMeths.reverseMap(_.value).toArray,
+      calls = myCalls.reverseMap(_.value).toArray
+    )
   }
 }
 object KlasExtractor {
@@ -74,8 +90,8 @@ object KlasExtractor {
 
 class Inherit(val me: Klas, val companion: Option[Klas], val impl: Option[Klas]) extends Named {
   var touched: Inherit = NoInherit
-  val ancestors = MMap[String, Inherit]()
-  val descendants = MMap[String, Inherit]()
+  val ancestors = RMap[String, Inherit]()
+  val descendants = RMap[String, Inherit]()
   def withCompanion(k: Klas) = new Inherit(me, Some(k), impl)
   def withImpl(k: Klas) = new Inherit(me, companion, Some(k))
   def isSingle = me.isSingle
@@ -88,7 +104,7 @@ object NoInherit extends Inherit(NoKlas, None, None) {}
 
 class Lib(val klases: Array[Klas]) {
   lazy val inheritance = {
-    val inh = MMap[String, Inherit]()
+    val inh = RMap[String, Inherit]()
     for (k <- klases) { inh += (k.name, new Inherit(k, None, None)) }
     val names = inh.map{ case (n,_) => n }.toArray
     for (n <- names if inh contains n) {
