@@ -25,3 +25,7 @@ Note that this is not actually Scala-library-specific, but that's the only place
 It is Scala-specific, due to the need to avoid endless chatter from traits and closures.
 
 It runs on bytecode instead of source to avoid caring about dependencies; you should be able to test any fragment of a project instead of needing all dependencies met in order to compile.
+
+### Compilation notes
+
+Use sbt.  For now, you need to manually place the complete ASM5 jar in lib.

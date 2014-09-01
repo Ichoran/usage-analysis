@@ -2,6 +2,9 @@ package scasm
 
 import scala.util._
 import scala.collection.mutable.{ AnyRefMap => RMap }
+import scalax.collection.mutable.Graph
+import scalax.collection.GraphPredef._
+import scalax.collection.GraphEdge._
 import org.objectweb.asm
 import asm.Opcodes._
 
@@ -33,6 +36,7 @@ case class Klas(name: String, sig: String, access: Int, parents: Array[String], 
   def isTrait = (access & ACC_INTERFACE) != 0
   def isImpl = name.endsWith("$class") && isAbstract && methods.forall(_.isStatic)
   def isAbstract = (access & ACC_ABSTRACT) != 0
+  def isFinal = (access & ACC_FINAL) != 0
   override def toString = s"Klas($name, $sig, $access,, ${parents.mkString(", ")},, ${fields.mkString(", ")},, ${methods.map(_.str(this)).mkString(", ")},, ${calls.mkString(", ")})"
 }
 object NoKlas extends Klas("", "", -1, Array.empty[String], Array.empty[String], Array.empty[Meth], Array.empty[Call]) { override def toString = "Klas()" }
@@ -88,22 +92,22 @@ object KlasExtractor {
   def apply(s: String): Either[String, Klas] = apply(new asm.ClassReader(s))
 }
 
-class Inherit(val me: Klas, val companion: Option[Klas], val impl: Option[Klas]) extends Named {
-  var touched: Inherit = NoInherit
+class Inherit(val me: Klas, val obj: Option[Klas], val impl: Option[Klas]) extends Named {
   val ancestors = RMap[String, Inherit]()
   val descendants = RMap[String, Inherit]()
-  def withCompanion(k: Klas) = new Inherit(me, Some(k), impl)
-  def withImpl(k: Klas) = new Inherit(me, companion, Some(k))
+  def withObj(k: Klas) = new Inherit(me, Some(k), impl)
+  def withImpl(k: Klas) = new Inherit(me, obj, Some(k))
   def isSingle = me.isSingle
   def isTrait = me.isTrait
   def isImpl = me.isImpl
   def name = me.name
-  override def toString = "x" + companion.map(_ => "c").mkString + impl.map(_ => "i").mkString
+  def justSingle = obj.exists(o => o.isSingle) && me.isFinal && me.methods.forall(_.isStatic)
+  override def toString = "x" + impl.map(_ => "i").mkString + obj.map(_ => "c").mkString
 }
 object NoInherit extends Inherit(NoKlas, None, None) {}
 
 class Lib(val klases: Array[Klas]) {
-  lazy val inheritance = {
+  lazy val (inheritance, inheritors) = {
     val inh = RMap[String, Inherit]()
     for (k <- klases) { inh += (k.name, new Inherit(k, None, None)) }
     val names = inh.map{ case (n,_) => n }.toArray
@@ -112,7 +116,7 @@ class Lib(val klases: Array[Klas]) {
       val nc = n + "$"
       val c = inh.getOrNull(nc)
       if (!k.isSingle && c != null && c.isSingle) {
-        val kc = k withCompanion c.me
+        val kc = k withObj c.me
         inh += (n, kc)
         inh += (nc, kc)
         k = kc
@@ -124,7 +128,7 @@ class Lib(val klases: Array[Klas]) {
           val ki = k withImpl i.me
           inh += (n, ki)
           inh += (ni, ki)
-          if (k.companion.isDefined) inh += (nc, ki)
+          if (k.obj.isDefined) inh += (nc, ki)
         }
       }
     }
@@ -138,7 +142,7 @@ class Lib(val klases: Array[Klas]) {
         }
       }
     }
-    inh
+    (inh, ks)
   }
 }
 object Lib {
