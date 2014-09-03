@@ -107,6 +107,18 @@ class Inherit(val me: Klas, val obj: Option[Klas], val impl: Option[Klas]) exten
 object NoInherit extends Inherit(NoKlas, None, None) {}
 
 class Lib(val klases: Array[Klas]) {
+  lazy val (ancestors, descendants, lookup) = {
+    val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
+    val names = klases.map(x => x.name -> x).toMap
+    for (k <- klases; p <- k.parents; kp <- names.get(p)) pBuild += kp -> k
+    val pairs = pBuild.result
+    val anc = Graph(pairs.map{ case (kp, k) => k ~> kp }: _*)
+    val dec = Graph(pairs.map{ case (kp, k) => kp ~> k }: _*)
+    (anc, dec, names)
+  }
+  def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
+  def downstream(s: String) = lookup.get(s).flatMap(x => Try { descendants.get(x).outerNodeTraverser.toArray }.toOption )
+  /*
   lazy val (inheritance, inheritors) = {
     val inh = RMap[String, Inherit]()
     for (k <- klases) { inh += (k.name, new Inherit(k, None, None)) }
@@ -144,6 +156,7 @@ class Lib(val klases: Array[Klas]) {
     }
     (inh, ks)
   }
+  */
 }
 object Lib {
   def read(f: java.io.File, listen: Call => Boolean = _ => true): Either[Vector[String], Lib] = {
