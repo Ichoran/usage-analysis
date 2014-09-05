@@ -107,7 +107,7 @@ class Inherit(val me: Klas, val obj: Option[Klas], val impl: Option[Klas]) exten
 object NoInherit extends Inherit(NoKlas, None, None) {}
 
 class Lib(val klases: Array[Klas]) {
-  lazy val (ancestors, descendants, relatives, lookup) = {
+  lazy val (ancestors, descendants, relatives, specialized, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
     val names = klases.map(x => x.name -> x).toMap
     for (k <- klases; p <- k.parents; kp <- names.get(p)) pBuild += kp -> k
@@ -130,50 +130,24 @@ class Lib(val klases: Array[Klas]) {
       }
       Graph(links: _*)
     }
-    (anc, dec, rel, names)
+    val templ = {
+      val spRegex = """(.+)\$mc(\w+)\$sp""".r
+      val spMap = new RMap[String, List[Klas]]()
+      klases.foreach(k => k.name match {
+        case spRegex(base, spec) => spMap getOrNull base match {
+            case null => names.get(base).foreach(c => spMap += (base, c :: k :: Nil))
+            case c :: rest => spMap += (base, c :: k :: rest)
+            case _ => throw new Exception("Invalid empty list in specialization map...how'd that happen???")
+          }
+        case _ =>  // Not a specialized class, ignore it.
+      })
+      Graph(spMap.map(_._2).toList.flatMap(x => x.headOption.toList.flatMap(x0 => x.drop(1).map(x0 ~ _))): _*)
+    }
+    (anc, dec, rel, templ, names)
   }
   def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
   def downstream(s: String) = lookup.get(s).flatMap(x => Try { descendants.get(x).outerNodeTraverser.toArray }.toOption )
   def alike(s: String) = lookup.get(s).flatMap(x => Try { relatives.get(x).outerNodeTraverser.toArray }.toOption )
-  /*
-  lazy val (inheritance, inheritors) = {
-    val inh = RMap[String, Inherit]()
-    for (k <- klases) { inh += (k.name, new Inherit(k, None, None)) }
-    val names = inh.map{ case (n,_) => n }.toArray
-    for (n <- names if inh contains n) {
-      var k = inh(n)
-      val nc = n + "$"
-      val c = inh.getOrNull(nc)
-      if (!k.isSingle && c != null && c.isSingle) {
-        val kc = k withObj c.me
-        inh += (n, kc)
-        inh += (nc, kc)
-        k = kc
-      }
-      if (k.isTrait) {
-        val ni = n + "$class"
-        val i = inh.getOrNull(ni)
-        if (i != null && i.isImpl) {
-          val ki = k withImpl i.me
-          inh += (n, ki)
-          inh += (ni, ki)
-          if (k.obj.isDefined) inh += (nc, ki)
-        }
-      }
-    }
-    val ks = inh.map{ case (_,i) => i.me.name }.toSet.toArray.sorted.map(n => inh(n))
-    for (k <- ks) {
-      for (np <- k.me.parents) {
-        val p = inh.getOrNull(np)
-        if (p != null) {
-          k.ancestors += (np, p)
-          p.descendants += (k.name, k)
-        }
-      }
-    }
-    (inh, ks)
-  }
-  */
 }
 object Lib {
   def read(f: java.io.File, listen: Call => Boolean = _ => true): Either[Vector[String], Lib] = {
