@@ -107,17 +107,34 @@ class Inherit(val me: Klas, val obj: Option[Klas], val impl: Option[Klas]) exten
 object NoInherit extends Inherit(NoKlas, None, None) {}
 
 class Lib(val klases: Array[Klas]) {
-  lazy val (ancestors, descendants, lookup) = {
+  lazy val (ancestors, descendants, relatives, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
     val names = klases.map(x => x.name -> x).toMap
     for (k <- klases; p <- k.parents; kp <- names.get(p)) pBuild += kp -> k
     val pairs = pBuild.result
     val anc = Graph(pairs.map{ case (kp, k) => k ~> kp }: _*)
     val dec = Graph(pairs.map{ case (kp, k) => kp ~> k }: _*)
-    (anc, dec, names)
+    val rel = {
+      val links = names.toList.flatMap{ case (_,k) =>
+        if (k.isSingle) Nil
+        else {
+          val o = names.get(k.name + "$").filter(_.isSingle).toList
+          val t = names.get(k.name + "$class").filter(_.isImpl).toList
+          (o ++ t) match {
+            case Nil => Nil
+            case a :: Nil => a~k :: Nil
+            case a :: b :: Nil => a~k :: b~k :: a~b :: Nil
+            case _ => throw new Exception("Huh???")
+          }
+        }
+      }
+      Graph(links: _*)
+    }
+    (anc, dec, rel, names)
   }
   def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
   def downstream(s: String) = lookup.get(s).flatMap(x => Try { descendants.get(x).outerNodeTraverser.toArray }.toOption )
+  def alike(s: String) = lookup.get(s).flatMap(x => Try { relatives.get(x).outerNodeTraverser.toArray }.toOption )
   /*
   lazy val (inheritance, inheritors) = {
     val inh = RMap[String, Inherit]()
