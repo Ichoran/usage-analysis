@@ -106,7 +106,7 @@ class Inherit(val me: Klas, val obj: Option[Klas], val impl: Option[Klas]) exten
 }
 object NoInherit extends Inherit(NoKlas, None, None) {}
 
-class Lib(val klases: Array[Klas]) {
+class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
   lazy val (ancestors, descendants, relatives, specialized, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
     val names = klases.map(x => x.name -> x).toMap
@@ -145,12 +145,25 @@ class Lib(val klases: Array[Klas]) {
     }
     (anc, dec, rel, templ, names)
   }
+  object extended {
+    val (ancestors, descendants) = stdlib match {
+      case None => (self.ancestors, self.descendants)
+      case Some(lib) =>
+        val anc = (self.ancestors ++ lib.ancestors)
+        val dec = (self.descendants ++ lib.descendants)
+        for (k <- klases; p <- k.parents; xp <- lib.lookup.get(p)) {
+          anc += k ~> xp
+          dec += xp ~> k
+        }
+        (anc, dec)
+    }
+  }
   def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
   def downstream(s: String) = lookup.get(s).flatMap(x => Try { descendants.get(x).outerNodeTraverser.toArray }.toOption )
   def alike(s: String) = lookup.get(s).flatMap(x => Try { relatives.get(x).outerNodeTraverser.toArray }.toOption )
 }
 object Lib {
-  def read(f: java.io.File, listen: Call => Boolean = _ => true): Either[Vector[String], Lib] = {
+  def read(f: java.io.File, listen: Call => Boolean = _ => true, lib: Option[Lib]): Either[Vector[String], Lib] = {
     if (!f.exists) return Left(Vector("Source library does not exist: " + f.getCanonicalFile.getPath))
     Try {
       val zf = new java.util.zip.ZipFile(f)
@@ -172,7 +185,7 @@ object Lib {
         }
       } finally zf.close
       val problems = ts.result
-      if (problems.length > 0) Left(problems) else Right(new Lib(ks.result))
+      if (problems.length > 0) Left(problems) else Right(new Lib(ks.result, lib))
     } match {
       case Success(x) => x
       case Failure(t) => Left(Vector("Problem reading source library " + f.getCanonicalFile.getPath, Usage.explain(t)))
@@ -185,7 +198,8 @@ class Usage {
 }
 
 object Usage {
-  def source(s: String) = Lib.read(new java.io.File(s), _ => false)
+  def source(s: String) = Lib.read(new java.io.File(s), _ => false, None)
+  def source(s: String, l: Lib) = Lib.read(new java.io.File(s), _ => false, Some(l))
   
   def explain(t: java.lang.Throwable) = 
     t.toString + ": " + Option(t.getMessage).getOrElse("") + "\n" + t.getStackTrace.map("  "+_).mkString("\n")
