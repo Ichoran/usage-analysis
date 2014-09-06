@@ -18,8 +18,8 @@ case class Call(op: Int, name: String, params: Array[String], in: V[Meth]) exten
 }
 object NoCall extends Call(-1, "", Array.empty[String], V(NoMeth)) { override def toString = "Call()" }
 
-case class Meth(name: String, access: Int, params: Array[String], in: V[Klas]) extends Named {
-  lazy val id = name + ".." + params.mkString("..")
+case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas]) extends Named {
+  lazy val id = name + ".." + params
   def isStatic = (access & ACC_STATIC) != 0
   def protection = (access & (ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE)) match {
     case ACC_PUBLIC => -1
@@ -27,10 +27,10 @@ case class Meth(name: String, access: Int, params: Array[String], in: V[Klas]) e
     case ACC_PRIVATE => 1
     case x => throw new Exception("What kind of access is " + x.toHexString + "?")
   }
-  def str(from: Klas) = if (from eq in.value) s"Meth($name,, ${params.mkString(", ")},, ^)" else toString
-  override def toString = s"Meth($name,, ${params.mkString(", ")},, $in)"
+  def str(from: Klas) = s"Meth($name,, $params,, ${generic.getOrElse("")},, ${if (from eq in.value) "^" else in.toString})"
+  override def toString = str(null)
 }
-object NoMeth extends Meth("", -1, Array.empty[String], V(NoKlas)) { override def toString = "Meth()" }
+object NoMeth extends Meth("", -1, "", None, V(NoKlas)) { override def toString = "Meth()" }
 
 case class Klas(name: String, sig: String, access: Int, parents: Array[String], fields: Array[String], methods: Array[Meth], calls: Array[Call]) extends Named {
   def isSingle = fields contains "MODULE$"
@@ -74,7 +74,7 @@ class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(A
     null
   }
   override def visitMethod(acc: Int, name: String, desc: String, sig: String, exc: Array[String]) = {
-    myMeths = V(Meth(name, acc, Array(sig, desc), myKlas)) :: myMeths
+    myMeths = V(Meth(name, acc, desc, Option(sig), myKlas)) :: myMeths
     MethExtractor
   }
   override def visitEnd {
@@ -146,10 +146,23 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
     }
   }
   object methods {
-    val ancestry: Map[String, Array[Meth]] = {
+    val ancestry: Map[String, Array[List[Meth]]] = {
       lookup.map{ case (k,v) => k -> {
-        v.methods.filter(! _.isStatic)
-        // Need logic to find full tree (via method id, hopefully)
+        var order = 0L
+        def nID = { order += 1; order }
+        val included = new RMap[String, (Long, List[Meth])]
+        if (extended.ancestors(v)) {
+          extended.ancestors.get(v).outerNodeTraverser.foreach(_.methods.foreach{ pm =>
+            if (!pm.isStatic) {
+              included getOrNull pm.id match {
+                case null => included += pm.id -> (nID -> (pm :: Nil))
+                case (id, ms) => included += pm.id -> (id -> (pm :: ms))
+              }
+            }
+          })
+        }
+        else v.methods.filter(! _.isStatic).foreach( m => included += m.id -> (nID -> (m :: Nil)) )
+        included.map(_._2).toArray.sortBy(_._1).map{ case (_, ms) => if (ms.lengthCompare(1) > 0) ms.reverse else ms }
       }}
     }
   }
