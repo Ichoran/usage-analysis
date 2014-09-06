@@ -19,6 +19,7 @@ case class Call(op: Int, name: String, params: Array[String], in: V[Meth]) exten
 object NoCall extends Call(-1, "", Array.empty[String], V(NoMeth)) { override def toString = "Call()" }
 
 case class Meth(name: String, access: Int, params: Array[String], in: V[Klas]) extends Named {
+  lazy val id = name + ".." + params.mkString("..")
   def isStatic = (access & ACC_STATIC) != 0
   def protection = (access & (ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE)) match {
     case ACC_PUBLIC => -1
@@ -26,8 +27,8 @@ case class Meth(name: String, access: Int, params: Array[String], in: V[Klas]) e
     case ACC_PRIVATE => 1
     case x => throw new Exception("What kind of access is " + x.toHexString + "?")
   }
-  def str(from: Klas) = if (from eq in.value) s"Meth($name, ${params.mkString(", ")}, ^)" else toString
-  override def toString = s"Meth($name, ${params.mkString(", ")}, $in)"
+  def str(from: Klas) = if (from eq in.value) s"Meth($name,, ${params.mkString(", ")},, ^)" else toString
+  override def toString = s"Meth($name,, ${params.mkString(", ")},, $in)"
 }
 object NoMeth extends Meth("", -1, Array.empty[String], V(NoKlas)) { override def toString = "Meth()" }
 
@@ -92,20 +93,6 @@ object KlasExtractor {
   def apply(s: String): Either[String, Klas] = apply(new asm.ClassReader(s))
 }
 
-class Inherit(val me: Klas, val obj: Option[Klas], val impl: Option[Klas]) extends Named {
-  val ancestors = RMap[String, Inherit]()
-  val descendants = RMap[String, Inherit]()
-  def withObj(k: Klas) = new Inherit(me, Some(k), impl)
-  def withImpl(k: Klas) = new Inherit(me, obj, Some(k))
-  def isSingle = me.isSingle
-  def isTrait = me.isTrait
-  def isImpl = me.isImpl
-  def name = me.name
-  def justSingle = obj.exists(o => o.isSingle) && me.isFinal && me.methods.forall(_.isStatic)
-  override def toString = "x" + impl.map(_ => "i").mkString + obj.map(_ => "c").mkString
-}
-object NoInherit extends Inherit(NoKlas, None, None) {}
-
 class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
   lazy val (ancestors, descendants, relatives, specialized, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
@@ -156,6 +143,14 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
           dec += xp ~> k
         }
         (anc, dec)
+    }
+  }
+  object methods {
+    val ancestry: Map[String, Array[Meth]] = {
+      lookup.map{ case (k,v) => k -> {
+        v.methods.filter(! _.isStatic)
+        // Need logic to find full tree (via method id, hopefully)
+      }}
     }
   }
   def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
