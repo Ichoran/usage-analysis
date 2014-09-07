@@ -165,6 +165,23 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
         included.map(_._2).toArray.sortBy(_._1).map{ case (_, ms) => if (ms.lengthCompare(1) > 0) ms.reverse else ms }
       }}
     }
+    val offspring: Map[Klas, Array[(Meth, List[Klas])]] = {
+      lookup.collect{ case (_,v) if extended.descendants(v) => v -> {
+        val myIds = v.methods.map(_.id).toSet
+        val myLst = new RMap[String, List[Klas]]
+        extended.descendants.get(v).outerNodeTraverser.filter(_.name != v.name).foreach{ cv =>
+          val descIds = cv.methods.map(_.id).toSet
+          (descIds & myIds).foreach{ name =>
+            myLst getOrNull name match {
+              case null => myLst += name -> (cv :: Nil)
+              case xs   => myLst += name -> (cv :: xs)
+            }
+          }
+        }
+        val idM = v.methods.map(x => x.id -> x).toMap
+        myLst.toArray.map{ case (s, xs) => idM(s) -> xs }
+      }}
+    }
   }
   def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
   def downstream(s: String) = lookup.get(s).flatMap(x => Try { descendants.get(x).outerNodeTraverser.toArray }.toOption )
