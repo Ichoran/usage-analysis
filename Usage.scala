@@ -153,7 +153,7 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean 
     }
   }
   object methods {
-    val ancestry: Map[String, Array[List[Meth]]] = {
+    lazy val ancestry: Map[String, Array[List[Meth]]] = {
       lookup.map{ case (k,v) => k -> {
         var order = 0L
         def nID = { order += 1; order }
@@ -172,7 +172,7 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean 
         included.map(_._2).toArray.sortBy(_._1).map{ case (_, ms) => if (ms.lengthCompare(1) > 0) ms.reverse else ms }
       }}
     }
-    val offspring: Map[Klas, Array[(Meth, List[Klas])]] = {
+    lazy val offspring: Map[Klas, Array[(Meth, List[Klas])]] = {
       lookup.collect{ case (_,v) if extended.descendants(v) => v -> {
         val myIds = v.methods.map(_.id).toSet
         val myLst = new RMap[String, List[Klas]]
@@ -188,6 +188,24 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean 
         val idM = v.methods.map(x => x.id -> x).toMap
         myLst.toArray.map{ case (s, xs) => idM(s) -> xs }
       }}
+    }
+    lazy val callgraph: Map[String, Map[Meth, Int]] = {
+      val cg = new RMap[String, RMap[Meth, Int]]
+      klases.
+        flatMap(_.calls.filter(c => lookup contains c.owner).map(c => (c.owner + ".." + c.id) -> c)).
+        groupBy(x => (x._1, x._2.in.value.id)).
+        foreach{ case ((oid, _), xs) =>
+          val m = xs.head._2.in.value
+          cg getOrNull oid match {
+            case null => cg += oid -> RMap(m -> xs.length)
+            case rmap =>
+              if (rmap contains m) rmap += m -> (rmap(m) + xs.length)  // Shouldn't ever hit this!
+              else rmap += m -> xs.length
+              // Side-effecting, so we're done
+          }
+        }
+        // Side-effecting, so we're done
+      cg.map{ case (k,v) => k -> v.toMap }.toMap
     }
   }
   def upstream(s: String) = lookup.get(s).flatMap(x => Try{ ancestors.get(x).outerNodeTraverser.toArray }.toOption )
