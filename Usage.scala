@@ -12,11 +12,12 @@ trait Named { def name: String }
 
 case class V[A <: Named](var value: A) { override def toString = "{" + value.name + "}" }
 
-case class Call(op: Int, name: String, params: Array[String], in: V[Meth]) extends Named {
-  def str(from: Meth) = if (from eq in.value) s"Call($op, $name, ${params.mkString(", ")}, ^)" else toString
-  override def toString = s"Call($op, $name, ${params.mkString(", ")}, $in)"
+case class Call(op: Int, name: String, owner: String, desc: String, in: V[Meth]) extends Named {
+  lazy val id = name + ".." + desc
+  def str(from: Meth) = s"Call($op, $name, $owner, $desc, ${if (from eq in.value) "^" else in.toString})"
+  override def toString = str(null)
 }
-object NoCall extends Call(-1, "", Array.empty[String], V(NoMeth)) { override def toString = "Call()" }
+object NoCall extends Call(-1, "", "", "", V(NoMeth)) { override def toString = "Call()" }
 
 case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas]) extends Named {
   lazy val id = name + ".." + params
@@ -42,7 +43,7 @@ case class Klas(name: String, sig: String, access: Int, parents: Array[String], 
 }
 object NoKlas extends Klas("", "", -1, Array.empty[String], Array.empty[String], Array.empty[Meth], Array.empty[Call]) { override def toString = "Klas()" }
 
-class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(ASM5) {
+class KlasExtractor private (listen: Option[Call => Boolean]) extends asm.ClassVisitor(ASM5) {
   private[this] val myKlas: V[Klas] = V(NoKlas)
   private[this] var myMeths: List[V[Meth]] = Nil
   private[this] var myCalls: List[V[Call]] = Nil
@@ -55,9 +56,10 @@ class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(A
   }
   
   object MethExtractor extends asm.MethodVisitor(ASM5) {
+    val pick = listen.getOrElse((c: Call) => false)
     override def visitMethodInsn(op: Int, owner: String, name: String, desc: String, itf: Boolean) {
-      val c = Call(op, name, Array(owner, desc), myMeths.head)
-      if (listen(c)) myCalls = V(c) :: myCalls
+      val c = Call(op, name, owner, desc, myMeths.head)
+      if (pick(c)) myCalls = V(c) :: myCalls
     }
   }
   
@@ -75,7 +77,7 @@ class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(A
   }
   override def visitMethod(acc: Int, name: String, desc: String, sig: String, exc: Array[String]) = {
     myMeths = V(Meth(name, acc, desc, Option(sig), myKlas)) :: myMeths
-    MethExtractor
+    if (listen.isDefined) MethExtractor else null
   }
   override def visitEnd {
     myKlas.value = myKlas.value.copy(
@@ -86,14 +88,19 @@ class KlasExtractor private (listen: Call => Boolean) extends asm.ClassVisitor(A
   }
 }
 object KlasExtractor {
-  def apply(cr: asm.ClassReader, listen: Call => Boolean = _ => true): Either[String, Klas] = (new KlasExtractor(listen)).from(cr)
+  def apply(cr: asm.ClassReader, listen: Option[Call => Boolean]): Either[String, Klas] = (new KlasExtractor(listen)).from(cr)
+  def apply(cr: asm.ClassReader): Either[String, Klas] = apply(cr, None)
   
-  def apply(is: java.io.InputStream): Either[String, Klas] = apply(new asm.ClassReader(is))
-  def apply(b: Array[Byte]): Either[String, Klas] = apply(new asm.ClassReader(b))
-  def apply(s: String): Either[String, Klas] = apply(new asm.ClassReader(s))
+  def apply(is: java.io.InputStream, listen: Option[Call => Boolean]): Either[String, Klas] = apply(new asm.ClassReader(is), listen)
+  def apply(b: Array[Byte], listen: Option[Call => Boolean]): Either[String, Klas] = apply(new asm.ClassReader(b), listen)
+  def apply(s: String, listen: Option[Call => Boolean]): Either[String, Klas] = apply(new asm.ClassReader(s), listen)
+  
+  def apply(is: java.io.InputStream): Either[String, Klas] = apply(is, None)
+  def apply(b: Array[Byte]): Either[String, Klas] = apply(b, None)
+  def apply(s: String): Either[String, Klas] = apply(s, None)
 }
 
-class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
+class Lib(val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean = false) { self =>
   lazy val (ancestors, descendants, relatives, specialized, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
     val names = klases.map(x => x.name -> x).toMap
@@ -188,7 +195,7 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
   def alike(s: String) = lookup.get(s).flatMap(x => Try { relatives.get(x).outerNodeTraverser.toArray }.toOption )
 }
 object Lib {
-  def read(f: java.io.File, listen: Call => Boolean = _ => true, lib: Option[Lib]): Either[Vector[String], Lib] = {
+  def read(f: java.io.File, listen: Option[Call => Boolean] = None, lib: Option[Lib]): Either[Vector[String], Lib] = {
     if (!f.exists) return Left(Vector("Source library does not exist: " + f.getCanonicalFile.getPath))
     Try {
       val zf = new java.util.zip.ZipFile(f)
@@ -199,7 +206,7 @@ object Lib {
         while (e.hasMoreElements) {
           val ze = e.nextElement
           if (ze.getName.endsWith(".class")) {
-            Try{ KlasExtractor(zf.getInputStream(ze)) match {
+            Try{ KlasExtractor(zf.getInputStream(ze), listen) match {
               case Left(t) => ts += t
               case Right(k) => ks += k
             }} match {
@@ -221,10 +228,13 @@ object Lib {
 
 class Usage {
 }
-
 object Usage {
-  def source(s: String) = Lib.read(new java.io.File(s), _ => false, None)
-  def source(s: String, l: Lib) = Lib.read(new java.io.File(s), _ => false, Some(l))
+  def source(s: String) = Lib.read(new java.io.File(s), None, None)
+  def source(s: String, l: Lib) = Lib.read(new java.io.File(s), None, Some(l))
+  def source(s: String, graphCalls: Boolean) = {
+    val listen = if (graphCalls) Some((c: Call) => true) else None
+    Lib.read(new java.io.File(s), listen, None)
+  }
   
   def explain(t: java.lang.Throwable) = 
     t.toString + ": " + Option(t.getMessage).getOrElse("") + "\n" + t.getStackTrace.map("  "+_).mkString("\n")
