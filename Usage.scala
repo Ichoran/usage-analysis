@@ -10,7 +10,10 @@ import asm.Opcodes._
 
 trait Named { def name: String }
 
-case class V[A <: Named](var value: A) { override def toString = "{" + value.name + "}" }
+case class V[A <: Named](var value: A) {
+  def valueFn(f: A => A) = { value = f(value); this }
+  override def toString = "{" + value.name + "}" 
+}
 
 case class Call(op: Int, name: String, owner: String, desc: String, in: V[Meth]) extends Named {
   lazy val id = name + ".." + desc
@@ -19,7 +22,7 @@ case class Call(op: Int, name: String, owner: String, desc: String, in: V[Meth])
 }
 object NoCall extends Call(-1, "", "", "", V(NoMeth)) { override def toString = "Call()" }
 
-case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas]) extends Named {
+case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas], wraps: Option[Call]) extends Named {
   lazy val id = name + ".." + params
   def isStatic = (access & ACC_STATIC) != 0
   def protection = (access & (ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE)) match {
@@ -31,7 +34,7 @@ case class Meth(name: String, access: Int, params: String, generic: Option[Strin
   def str(from: Klas) = s"Meth($name,, $params,, ${generic.getOrElse("")},, ${if (from eq in.value) "^" else in.toString})"
   override def toString = str(null)
 }
-object NoMeth extends Meth("", -1, "", None, V(NoKlas)) { override def toString = "Meth()" }
+object NoMeth extends Meth("", -1, "", None, V(NoKlas), None) { override def toString = "Meth()" }
 
 case class Klas(name: String, sig: String, access: Int, parents: Array[String], fields: Array[String], methods: Array[Meth], calls: Array[Call]) extends Named {
   def isSingle = fields contains "MODULE$"
@@ -55,12 +58,33 @@ class KlasExtractor private (listen: Option[Call => Boolean]) extends asm.ClassV
     }
   }
   
-  object MethExtractor extends asm.MethodVisitor(ASM5) {
+  private[this] object MethExtractor extends asm.MethodVisitor(ASM5) {
+    var wraps: Option[Call] = null
     val pick = listen.getOrElse((c: Call) => false)
+    override def visitFieldInsn(op: Int, owner: String, name: String, desc: String) { wraps = None }
+    override def visitIincInsn(v: Int, i: Int) { wraps = None }
+    override def visitInsn(op: Int) {}
+    override def visitIntInsn(op: Int, i: Int) {}
+    override def visitInvokeDynamicInsn(name: String, desc: String, bsm: asm.Handle, bsmArgs: Object*) { wraps = None }
+    override def visitJumpInsn(op: Int, l: asm.Label) { wraps = None }
+    override def visitLdcInsn(cst: Object) {}
+    override def visitLookupSwitchInsn(default: asm.Label, keys: Array[Int], labels: Array[asm.Label]) { wraps = None }
+    override def visitMultiANewArrayInsn(desc: String, d: Int) { wraps = None }
     override def visitMethodInsn(op: Int, owner: String, name: String, desc: String, itf: Boolean) {
       val c = Call(op, name, owner, desc, myMeths.head)
-      if (pick(c)) myCalls = V(c) :: myCalls
+      if (pick(c)) {
+        myCalls = V(c) :: myCalls
+        if (wraps == null) wraps = Some(c)
+        else wraps = None
+      }
     }
+    override def visitTableSwitchInsn(i0: Int, i1: Int, default: asm.Label, labels: asm.Label*) { wraps = None }
+    override def visitTypeInsn(op: Int, tpe: String) {}
+    override def visitVarInsn(op: Int, v: Int) {}
+    override def visitEnd() {
+      if (wraps != null && wraps.isDefined) myMeths.head.valueFn(m => m.copy(wraps = wraps))
+    }
+    def apply() = { wraps = null; this: asm.MethodVisitor }
   }
   
   override def visit(ver: Int, acc: Int, name: String, sig: String, sup: String, iface: Array[String]) {
@@ -76,8 +100,8 @@ class KlasExtractor private (listen: Option[Call => Boolean]) extends asm.ClassV
     null
   }
   override def visitMethod(acc: Int, name: String, desc: String, sig: String, exc: Array[String]) = {
-    myMeths = V(Meth(name, acc, desc, Option(sig), myKlas)) :: myMeths
-    if (listen.isDefined) MethExtractor else null
+    myMeths = V(Meth(name, acc, desc, Option(sig), myKlas, None)) :: myMeths
+    if (listen.isDefined) MethExtractor() else null
   }
   override def visitEnd {
     myKlas.value = myKlas.value.copy(
@@ -191,8 +215,11 @@ class Lib(val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean 
     }
     lazy val callgraph: Map[String, Map[Meth, Int]] = {
       val cg = new RMap[String, RMap[Meth, Int]]
+      val relevant = stdlib.
+        map(std => (c: Call) => lookup.contains(c.owner) || std.lookup.contains(c.owner)).
+        getOrElse((c: Call) => lookup contains c.owner)
       klases.
-        flatMap(_.calls.filter(c => lookup contains c.owner).map(c => (c.owner + ".." + c.id) -> c)).
+        flatMap(_.calls.filter(relevant).map(c => (c.owner + ".." + c.id) -> c)).
         groupBy(x => (x._1, x._2.in.value.id)).
         foreach{ case ((oid, _), xs) =>
           val m = xs.head._2.in.value
@@ -247,12 +274,15 @@ object Lib {
 class Usage {
 }
 object Usage {
-  def source(s: String) = Lib.read(new java.io.File(s), None, None)
-  def source(s: String, l: Lib) = Lib.read(new java.io.File(s), None, Some(l))
-  def source(s: String, graphCalls: Boolean) = {
+  private def libread(s: String, olib: Option[Lib], graphCalls: Boolean) = {
     val listen = if (graphCalls) Some((c: Call) => true) else None
-    Lib.read(new java.io.File(s), listen, None)
+    Lib.read(new java.io.File(s), listen, olib)
   }
+  
+  def source(s: String) = libread(s, None, false)
+  def source(s: String, l: Lib) = libread(s, Some(l), false)
+  def source(s: String, graphCalls: Boolean) = libread(s, None, graphCalls)
+  def source(s: String, l: Lib, graphCalls: Boolean) = libread(s, Some(l), graphCalls)
   
   def explain(t: java.lang.Throwable) = 
     t.toString + ": " + Option(t.getMessage).getOrElse("") + "\n" + t.getStackTrace.map("  "+_).mkString("\n")
