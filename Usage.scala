@@ -15,6 +15,16 @@ case class V[A <: Named](var value: A) {
   override def toString = "{" + value.name + "}" 
 }
 
+case class Mute[A](value: A) {
+  override def toString = "..."
+  override val hashCode = "...".hashCode
+}
+object Mute {
+  implicit def unmute[A](ma: Mute[A]) = ma.value
+  implicit def mute[A](a: A) = new Mute(a)
+}
+  
+
 case class Call(op: Int, name: String, owner: String, desc: String, in: V[Meth]) extends Named {
   lazy val id = name + ".." + desc
   def str(from: Meth) = s"Call($op, $name, $owner, $desc, ${if (from eq in.value) "^" else in.toString})"
@@ -22,7 +32,7 @@ case class Call(op: Int, name: String, owner: String, desc: String, in: V[Meth])
 }
 object NoCall extends Call(-1, "", "", "", V(NoMeth)) { override def toString = "Call()" }
 
-case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas], wraps: Option[Call]) extends Named {
+case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas], wraps: Mute[Option[Call]]) extends Named {
   lazy val id = name + ".." + params
   def isStatic = (access & ACC_STATIC) != 0
   def protection = (access & (ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE)) match {
