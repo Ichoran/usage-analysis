@@ -29,3 +29,12 @@ It runs on bytecode instead of source to avoid caring about dependencies; you sh
 ### Compilation notes
 
 Use sbt.  For now, you need to manually place the complete ASM5 jar in lib.
+
+### Completeness notes
+
+Very rough.  Can read source and target libraries (via calls to methods on `scasm.Usage` object.  A few methods are provided to inspect what is read.
+
+For a simple example, `val lib = scasm.Usage.source("/jvm/scala/lib/scala-library.jar", true).right.get` from the REPL / sbt console.  (Assuming that this path is where you keep a scala-library.jar.)
+
+Interesting methods on the returned `Lib` instance include `ancestry`, `descendants`, and `methods.callgraph`.  None of them are probaby comprehensible yet, however.
+
