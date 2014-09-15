@@ -1,4 +1,4 @@
-package scasm
+package usage
 
 import scala.util._
 import scala.collection.mutable.{ AnyRefMap => RMap }
