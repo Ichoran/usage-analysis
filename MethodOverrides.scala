@@ -4,17 +4,29 @@ import scala.collection.mutable.{ AnyRefMap => RMap }
 
 object MethodOverrides {
   def record(root: String, lib: Lib, other: Lib, known: RMap[String, RMap[String, List[String]]]): RMap[String, RMap[String, List[String]]] = {
-    val r = lib.lookup(root)
+    val r = lib.lookup.get(root) match {
+      case None => return RMap.empty
+      case Some(x) => x
+    }
     if (other.extended.descendants contains r) {
+      val annotated = RMap(r.name -> ())
+      lib.descendants.get(r).outerNodeTraverser.foreach{ x => annotated += x.name -> () }
       other.extended.descendants.get(r).outerNodeTraverser.foreach{ x =>
         if (!(lib.lookup contains x.name)) {
           other.extended.ancestors.get(x).outerNodeTraverser.foreach{ a =>
-            if (lib.lookup contains a.name) {
+            if (annotated contains a.name) {
               known getOrNull a.name match {
                 case null => known += (a.name -> RMap("<>" -> List(x.name)))
                 case m => m getOrNull "<>" match {
                   case null => m += ("<>" -> List(x.name))
                   case xs => m += ("<>" -> (x.name :: xs))
+                }
+              }
+              val ms = known(a.name)
+              (x.methods.filter(_.wraps.isEmpty).map(_.name).toSet & a.methods.map(_.name).toSet).foreach{ case name =>
+                ms getOrNull name match {
+                  case null => ms += name -> List(x.name)
+                  case xs => ms += name -> (x.name :: xs)
                 }
               }
             }
