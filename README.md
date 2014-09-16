@@ -38,3 +38,7 @@ For a simple example, `val lib = scasm.Usage.source("/jvm/scala/lib/scala-librar
 
 Interesting methods on the returned `Lib` instance include `ancestry`, `descendants`, and `methods.callgraph`.  None of them are probaby comprehensible yet, however.
 
+There is also a work-in-progress `MethodOverrides` class that is runnable.
+Try it with a first argument of `scala/collection/Traversable` followed by
+the path to `scala-library.jar` followed by a list of other jars that may
+override `Traversable` or its children within `scala-library.jar`.
