@@ -8,26 +8,33 @@ object MethodOverrides {
       case None => return RMap.empty
       case Some(x) => x
     }
-    if (other.extended.descendants contains r) {
+    if ((other eq lib) || (other.extended.descendants contains r)) {
+      def otherDesc(k: Klas) =
+        if (other eq lib) lib.descendants.get(k)
+        else other.extended.descendants.get(k)
+      def otherFilt(s: String) =
+        if (other eq lib) s != r.name
+        else !(lib.lookup contains s)
       val annotated = RMap(r.name -> ())
       lib.descendants.get(r).outerNodeTraverser.foreach{ x => annotated += x.name -> () }
-      other.extended.descendants.get(r).outerNodeTraverser.foreach{ x =>
-        if (!(lib.lookup contains x.name)) {
-          other.extended.ancestors.get(x).outerNodeTraverser.foreach{ a =>
-            if (annotated contains a.name) {
-              known getOrNull a.name match {
-                case null => known += (a.name -> RMap("<>" -> List(x.name)))
-                case m => m getOrNull "<>" match {
-                  case null => m += ("<>" -> List(x.name))
-                  case xs => m += ("<>" -> (x.name :: xs))
-                }
+      otherDesc(r).outerNodeTraverser.foreach{ x =>
+        if (otherFilt(x.name)) {
+          val targets = 
+            if (other eq lib) lib.ancestors.get(x).outerNodeTraverser.filter(y => (y ne x) && (annotated contains y.name))
+            else other.extended.ancestors.get(x).outerNodeTraverser.filter(annotated contains _.name)
+          targets.foreach{ a =>
+            known getOrNull a.name match {
+              case null => known += (a.name -> RMap("" -> List(x.name)))
+              case m => m getOrNull "" match {
+                case null => m += ("" -> List(x.name))
+                case xs => m += ("" -> (x.name :: xs))
               }
-              val ms = known(a.name)
-              (x.methods.filter(_.wraps.isEmpty).map(_.name).toSet & a.methods.map(_.name).toSet).foreach{ case name =>
-                ms getOrNull name match {
-                  case null => ms += name -> List(x.name)
-                  case xs => ms += name -> (x.name :: xs)
-                }
+            }
+            val ms = known(a.name)
+            (x.methods.filter(_.wraps.isEmpty).map(_.name).toSet & a.methods.map(_.name).toSet).foreach{ case name =>
+              ms getOrNull name match {
+                case null => ms += name -> List(x.name)
+                case xs => ms += name -> (x.name :: xs)
               }
             }
           }
@@ -61,7 +68,7 @@ object MethodOverrides {
     overrides.toList.sortBy(_._1).map(x => x._1 -> x._2.toList.sortBy(_._1).map(y => y._1 -> y._2.sorted)).foreach{ case (n, xs) =>
       println(n)
       xs.foreach{ case (m, ys) =>
-        println("  " + m)
+        if (m.length > 0) println("  " + m)
         ys.foreach(y => println("    " + y))
       }
     }

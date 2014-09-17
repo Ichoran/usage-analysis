@@ -134,7 +134,7 @@ object KlasExtractor {
   def apply(s: String): Either[String, Klas] = apply(s, None)
 }
 
-class Lib(val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean = false) { self =>
+class Lib(val file: java.io.File, val klases: Array[Klas], val stdlib: Option[Lib], graphCalls: Boolean = false) { self =>
   lazy val (ancestors, descendants, relatives, specialized, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
     val names = klases.map(x => x.name -> x).toMap
@@ -272,7 +272,7 @@ object Lib {
         }
       } finally zf.close
       val problems = ts.result
-      if (problems.length > 0) Left(problems) else Right(new Lib(ks.result, lib))
+      if (problems.length > 0) Left(problems) else Right(new Lib(f, ks.result, lib))
     } match {
       case Success(x) => x
       case Failure(t) => Left(Vector("Problem reading source library " + f.getCanonicalFile.getPath, Usage.explain(t)))
@@ -281,12 +281,13 @@ object Lib {
 }
 
 
-class Usage {
-}
 object Usage {
   private def libread(s: String, olib: Option[Lib], graphCalls: Boolean) = {
     val listen = if (graphCalls) Some((c: Call) => true) else None
-    Lib.read(new java.io.File(s), listen, olib)
+    val f = (new java.io.File(s)).getCanonicalFile
+    olib.filter(_.file == f).map(x => Right(x)).getOrElse{ 
+      Lib.read(f, listen, olib)
+    }
   }
   
   def source(s: String) = libread(s, None, false)
