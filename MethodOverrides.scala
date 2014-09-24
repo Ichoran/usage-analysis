@@ -31,7 +31,8 @@ object MethodOverrides {
               }
             }
             val ms = known(a.name)
-            (x.methods.filter(_.wraps.isEmpty).map(_.name).toSet & a.methods.map(_.name).toSet).foreach{ case name =>
+            val set = x.methods.evalOrEmpty(_.filter(! _.wraps.isSet).map(_.name).toSet) & a.methods.evalOrEmpty(_.map(_.name).toSet)
+            set.foreach{ case name =>
               ms getOrNull name match {
                 case null => ms += name -> List(x.name)
                 case xs => ms += name -> (x.name :: xs)
@@ -46,7 +47,7 @@ object MethodOverrides {
   def main(args: Array[String]) {
     if (args.length < 1) { println("First argument should be the root of the inheritance hierarchy"); sys.exit(1) }
     if (args.length < 2) { println("Second argument should be the .jar that contains the root file"); sys.exit(1) }
-    val lib = Usage.source(args(1), true) match {
+    val lib = Usage.source(args(1)) match {
       case Right(x) => x
       case Left(e) => println("Error"); e.foreach(println); sys.exit(1)
     }
@@ -54,7 +55,7 @@ object MethodOverrides {
 
     var overrides = RMap.empty[String, RMap[String, List[String]]]
     val errorBuilder = Vector.newBuilder[Vector[String]]
-    args.drop(2).foreach(s => Usage.source(s, lib, true) match {
+    args.drop(2).foreach(s => Usage.source(s, lib) match {
       case Right(x) => overrides = record(args(0), lib, x, overrides)
       case Left(e) => errorBuilder += (("Error in "+ s) +: e)
     })
@@ -68,7 +69,10 @@ object MethodOverrides {
     overrides.toList.sortBy(_._1).map(x => x._1 -> x._2.toList.sortBy(_._1).map(y => y._1 -> y._2.sorted)).foreach{ case (n, xs) =>
       println(n)
       xs.foreach{ case (m, ys) =>
-        if (m.length > 0) println("  " + m)
+        if (m.length > 0) {
+          val imped = lib.lookup.get(n).flatMap(_.methods.orEmpty.find(_.name == m).filter(_.implemented)).map(_ => " *").getOrElse("")
+          println("  " + m + imped)
+        }
         ys.foreach(y => println("    " + y))
       }
     }

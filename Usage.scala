@@ -70,8 +70,10 @@ object NoCall extends Call(-1, "", "", "", V(NoMeth)) { override def toString = 
 
 case class Meth(name: String, access: Int, params: String, generic: Option[String], in: V[Klas]) extends Named {
   val wraps = V[Call]()
-  val implemented = false
+  val implementation = V[Meth]()
+  def implemented = implementation.isSet || ((access & ACC_ABSTRACT) == 0 && !wraps.isSet)
   lazy val id = name + ".." + params
+  def imps(k: Klas, m: Meth) = (name == m.name) && (params == "(L" + k.name + ";" + m.params.drop(1))
   def isStatic = (access & ACC_STATIC) != 0
   def protection = (access & (ACC_PUBLIC | ACC_PROTECTED | ACC_PRIVATE)) match {
     case ACC_PUBLIC => -1
@@ -178,7 +180,7 @@ object KlasExtractor {
 }
 
 class Lib(val file: java.io.File, val klases: Array[Klas], val stdlib: Option[Lib]) { self =>
-  lazy val (ancestors, descendants, relatives, specialized, lookup) = {
+  val (ancestors, descendants, relatives, specialized, lookup) = {
     val pBuild = Vector.newBuilder[(Klas, Klas)]   // Vector to avoid Array's invariance
     val names = klases.map(x => x.name -> x).toMap
     for (k <- klases; p <- k.parents; kp <- names.get(p)) pBuild += kp -> k
@@ -216,6 +218,25 @@ class Lib(val file: java.io.File, val klases: Array[Klas], val stdlib: Option[Li
     }
     (anc, dec, rel, templ, names)
   }
+  
+  private[this] def findTraitMethodImplementations() {
+    klases.withFilter(k => k.isTrait && relatives.contains(k)).foreach{ t =>
+      // t is a class which is a trait--need to find method implementations in companion
+      relatives.get(t).outerNodeTraverser.withFilter(_ ne t).foreach{ companion =>
+        val byName = companion.methods.evalOrEmpty(_.groupBy(_.name))  // Faster lookup for big method lists
+        t.methods.orEmpty.foreach{ tm =>
+          // tm is a method of trait t
+          byName.get(tm.name).foreach(_.filter(x => x.imps(t,tm) && x.implemented).toList match {
+            case x :: Nil => tm.implementation.offer(x)
+            case x :: xs => throw new Exception("Two possible implementations?!")
+            case _ =>
+          })
+        }
+      }
+    }
+  }
+  findTraitMethodImplementations()
+  
   object extended {
     val (ancestors, descendants) = stdlib match {
       case None => (self.ancestors, self.descendants)
