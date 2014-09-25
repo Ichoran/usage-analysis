@@ -42,3 +42,25 @@ There is also a work-in-progress `MethodOverrides` class that is runnable.
 Try it with a first argument of `scala/collection/Traversable` followed by
 the path to `scala-library.jar` followed by a list of other jars that may
 override `Traversable` or its children within `scala-library.jar`.
+
+### Preliminary Goals
+
+[dbuild](https://github.com/typesafehub/dbuild) is a build tool that gathers and builds Scala projects,
+and is used with a [large build set](https://github.com/scala/community-builds) to check the Scala compiler.
+
+How completely does the community build set exercise the Scala library?  We would like to know
+ * How many times each class in the Scala library is initialized
+ * How many times each trait or class in the Scala library is inherited from
+ * How many times each method in the Scala library is called (including those defined in traits)
+ * How many times each method in the Scala library is overridden
+
+To browse this data, we would like
+ * A list of classes/traits sorted by times initialized
+ * A list of classes/traits sorted by times inherited
+ * A list of the top 200 methods used
+ * A list of all methods never used
+ * A list of top 200 methods overridden
+ * Optionally, stats for the four things we'd like to know injected into Scaladocs.
+
+Thus, with a single command, we can use the output of dbuild to generate a usage map for the Scala library.
+(Or any other library, actually.)

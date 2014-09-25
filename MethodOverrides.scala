@@ -15,8 +15,8 @@ object MethodOverrides {
       def otherFilt(s: String) =
         if (other eq lib) s != r.name
         else !(lib.lookup contains s)
-      val annotated = RMap(r.name -> ())
-      lib.descendants.get(r).outerNodeTraverser.foreach{ x => annotated += x.name -> () }
+      val annotated = RMap((r.name, ()))
+      lib.descendants.get(r).outerNodeTraverser.foreach{ x => annotated += ((x.name, ())) }
       otherDesc(r).outerNodeTraverser.foreach{ x =>
         if (otherFilt(x.name)) {
           val targets = 
@@ -67,7 +67,7 @@ object MethodOverrides {
     else println(s"All ${args.length-2} target libraries loaded okay.")
     println(s"Found ${overrides.size} classes with external descendants")
     overrides.toList.sortBy(_._1).map(x => x._1 -> x._2.toList.sortBy(_._1).map(y => y._1 -> y._2.sorted)).foreach{ case (n, xs) =>
-      println(n)
+      println("@" + n)
       xs.foreach{ case (m, ys) =>
         if (m.length > 0) {
           val imped = lib.lookup.get(n).flatMap(_.methods.orEmpty.find(_.name == m).filter(_.implemented)).map(_ => " *").getOrElse("")
